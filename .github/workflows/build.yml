@@ -5,7 +5,8 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest
+    # 锁定为环境最稳定、自带 VS 2022 的 windows-2022 镜像
+    runs-on: windows-2022
     steps:
       - name: Checkout cvwrap with submodules
         uses: actions/checkout@v4
@@ -47,12 +48,10 @@ jobs:
           Write-Host "Extracting Maya 2022 Devkit..."
           Expand-Archive -Path $destZip -DestinationPath $extractDir -Force
           
-          # 自动递归寻找 include/maya/MFn.h 所在的 devkitBase 目录
           $mfn = Get-ChildItem -Path $extractDir -Filter "MFn.h" -Recurse | Select-Object -First 1
           if ($mfn) {
             $devkitBase = $mfn.Directory.Parent.Parent.FullName
             Write-Host "Found Maya Devkit at: $devkitBase"
-            # 输出给后续步骤使用
             echo "DEVKIT_BASE=$devkitBase" >> $env:GITHUB_ENV
           } else {
             throw "Could not locate include/maya/MFn.h in extracted devkit!"
@@ -61,9 +60,16 @@ jobs:
       - name: Configure and Build cvWrap
         shell: pwsh
         run: |
+          Write-Host "Patching CMakeLists.txt for modern CMake compatibility..."
+          # 自动将所有旧版 cmake_minimum_required(VERSION 2.8) 修复为 3.16
+          Get-ChildItem -Path . -Filter "CMakeLists.txt" -Recurse | ForEach-Object {
+            (Get-Content $_.FullName) -replace 'cmake_minimum_required\(VERSION [0-2]\..*\)', 'cmake_minimum_required(VERSION 3.16)' | Set-Content $_.FullName
+          }
+
           Write-Host "Using DEVKIT_LOCATION: $env:DEVKIT_BASE"
           
           cmake -B build -G "Visual Studio 17 2022" -A x64 `
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 `
             -DMAYA_VERSION=2022 `
             -DDEVKIT_LOCATION="$env:DEVKIT_BASE" `
             -DMAYA_LOCATION="$env:DEVKIT_BASE"

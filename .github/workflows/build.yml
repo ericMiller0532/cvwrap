@@ -5,7 +5,6 @@ on:
 
 jobs:
   build:
-    # 锁定为环境最稳定、自带 VS 2022 的 windows-2022 镜像
     runs-on: windows-2022
     steps:
       - name: Checkout cvwrap with submodules
@@ -50,7 +49,8 @@ jobs:
           
           $mfn = Get-ChildItem -Path $extractDir -Filter "MFn.h" -Recurse | Select-Object -First 1
           if ($mfn) {
-            $devkitBase = $mfn.Directory.Parent.Parent.FullName
+            # 转换为 CMake 兼容的正斜杠格式（避免反斜杠被转义）
+            $devkitBase = $mfn.Directory.Parent.Parent.FullName.Replace('\', '/')
             Write-Host "Found Maya Devkit at: $devkitBase"
             echo "DEVKIT_BASE=$devkitBase" >> $env:GITHUB_ENV
           } else {
@@ -61,20 +61,39 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "Patching CMakeLists.txt for modern CMake compatibility..."
-          # 自动将所有旧版 cmake_minimum_required(VERSION 2.8) 修复为 3.16
           Get-ChildItem -Path . -Filter "CMakeLists.txt" -Recurse | ForEach-Object {
             (Get-Content $_.FullName) -replace 'cmake_minimum_required\(VERSION [0-2]\..*\)', 'cmake_minimum_required(VERSION 3.16)' | Set-Content $_.FullName
           }
 
-          Write-Host "Using DEVKIT_LOCATION: $env:DEVKIT_BASE"
+          $devkit = $env:DEVKIT_BASE
+          Write-Host "Using Clean Devkit Path: $devkit"
           
-          cmake -B build -G "Visual Studio 17 2022" -A x64 `
-            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 `
-            -DMAYA_VERSION=2022 `
-            -DDEVKIT_LOCATION="$env:DEVKIT_BASE" `
-            -DMAYA_LOCATION="$env:DEVKIT_BASE"
-            
-          cmake --build build --config Release
+          # 设置环境变量，供 FindMaya.cmake 识别
+          $env:MAYA_LOCATION = $devkit
+          $env:DEVKIT_LOCATION = $devkit
+
+          # 使用安全的参数数组调用 CMake，避免反引号换行引起的传参破坏
+          $cmakeArgs = @(
+            "-B", "build",
+            "-G", "Visual Studio 17 2022",
+            "-A", "x64",
+            "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
+            "-DMAYA_VERSION=2022",
+            "-DMAYA_LOCATION=$devkit",
+            "-DDEVKIT_LOCATION=$devkit",
+            "-DMAYA_INCLUDE_DIR=$devkit/include",
+            "-DMAYA_LIBRARY=$devkit/lib/OpenMaya.lib"
+          )
+          
+          Write-Host "Running cmake configure..."
+          & cmake @cmakeArgs
+          
+          if ($LASTEXITCODE -ne 0) {
+            throw "CMake configure failed!"
+          }
+
+          Write-Host "Running cmake build..."
+          & cmake --build build --config Release
 
       - name: Upload cvWrap.mll Artifact
         uses: actions/upload-artifact@v4

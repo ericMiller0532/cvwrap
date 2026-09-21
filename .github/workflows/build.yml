@@ -1,0 +1,35 @@
+name: Build cvWrap for Maya
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        maya_version: ['2022', '2023', '2024', '2025']
+    steps:
+      - name: Checkout cvwrap
+        uses: actions/checkout@v4
+
+      - name: Download Maya Devkit
+        run: |
+          $version = "${{ matrix.maya_version }}"
+          $url = "https://damassets.autodesk.net/content/dam/autodesk/www/adn/Devkit_Maya${version}_Windows.zip"
+          Write-Host "Downloading Devkit from $url"
+          Invoke-WebRequest -Uri $url -OutFile "devkit.zip"
+          Expand-Archive -Path "devkit.zip" -DestinationPath "devkit"
+
+      - name: Configure and Build
+        run: |
+          cmake -B build -G "Visual Studio 17 2022" -A x64 `
+            -DMAYA_VERSION=${{ matrix.maya_version }} `
+            -DMAYA_DEVKIT_ROOT="${{ github.workspace }}/devkit"
+          cmake --build build --config Release
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cvWrap_Maya${{ matrix.maya_version }}_Windows
+          path: build/Release/cvWrap.mll

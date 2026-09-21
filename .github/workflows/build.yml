@@ -1,4 +1,4 @@
-name: Build cvWrap for Maya
+name: Build cvWrap for Maya 2022
 
 on:
   workflow_dispatch:
@@ -6,30 +6,37 @@ on:
 jobs:
   build:
     runs-on: windows-latest
-    strategy:
-      matrix:
-        maya_version: ['2022', '2023', '2024', '2025']
     steps:
-      - name: Checkout cvwrap
+      - name: Checkout cvwrap with submodules
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
-      - name: Download Maya Devkit
-        run: |
-          $version = "${{ matrix.maya_version }}"
-          $url = "https://damassets.autodesk.net/content/dam/autodesk/www/adn/Devkit_Maya${version}_Windows.zip"
-          Write-Host "Downloading Devkit from $url"
-          Invoke-WebRequest -Uri $url -OutFile "devkit.zip"
-          Expand-Archive -Path "devkit.zip" -DestinationPath "devkit"
+      - name: Auto Download Maya 2022 Devkit
+        uses: blurstudio/mayaModuleActions/getMayaDevkit@v1
+        id: devkit
+        with:
+          maya: '2022'
+          cache: true
 
       - name: Configure and Build
+        shell: pwsh
         run: |
+          $devkit = "${{ steps.devkit.outputs.devkit-path }}"
+          Write-Host "Devkit successfully loaded at: $devkit"
+          
+          # 生成工程并编译
           cmake -B build -G "Visual Studio 17 2022" -A x64 `
-            -DMAYA_VERSION=${{ matrix.maya_version }} `
-            -DMAYA_DEVKIT_ROOT="${{ github.workspace }}/devkit"
+            -DMAYA_VERSION=2022 `
+            -DDEVKIT_LOCATION="$devkit" `
+            -DMAYA_LOCATION="$devkit"
+            
           cmake --build build --config Release
 
-      - name: Upload Artifact
+      - name: Upload cvWrap.mll
         uses: actions/upload-artifact@v4
         with:
-          name: cvWrap_Maya${{ matrix.maya_version }}_Windows
-          path: build/Release/cvWrap.mll
+          name: cvWrap_Maya2022_Windows
+          path: |
+            build/Release/cvWrap.mll
+            build/**/cvWrap.mll

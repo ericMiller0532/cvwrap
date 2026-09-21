@@ -12,31 +12,67 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Auto Download Maya 2022 Devkit
-        uses: blurstudio/mayaModuleActions/getMayaDevkit@v1
-        id: devkit
-        with:
-          maya: '2022'
-          cache: true
-
-      - name: Configure and Build
+      - name: Download and Prepare Maya 2022 Devkit
         shell: pwsh
         run: |
-          $devkit = "${{ steps.devkit.outputs.devkit-path }}"
-          Write-Host "Devkit successfully loaded at: $devkit"
+          $urls = @(
+            "https://autodesk-adn-transfer.s3.us-west-2.amazonaws.com/ADN+Extranet/M%26E/Maya/devkit+2022/Autodesk_Maya_2022_5_Update_DEVKIT_Windows.zip",
+            "https://autodesk-adn-transfer.s3.us-west-2.amazonaws.com/ADN+Extranet/M%26E/Maya/devkit+2022/Autodesk_Maya_2022_DEVKIT_Windows.zip",
+            "https://autodesk-adn-transfer.s3-us-west-2.amazonaws.com/ADN+Extranet/M%26E/Maya/devkit+2022/Autodesk_Maya_2022_DEVKIT_Windows.zip"
+          )
           
-          # 生成工程并编译
+          $destZip = "$env:RUNNER_TEMP\devkit.zip"
+          $extractDir = "$env:RUNNER_TEMP\devkit"
+          
+          $downloaded = $false
+          foreach ($url in $urls) {
+            Write-Host "Attempting download from: $url"
+            try {
+              & curl.exe -f -L --retry 3 -o $destZip $url
+              if ($LASTEXITCODE -eq 0 -and (Test-Path $destZip) -and ((Get-Item $destZip).Length -gt 10000000)) {
+                $fileSizeMB = [math]::Round((Get-Item $destZip).Length / 1MB, 2)
+                Write-Host "Download successful! File size: $fileSizeMB MB"
+                $downloaded = $true
+                break
+              }
+            } catch {
+              Write-Host "Failed from this mirror, trying next..."
+            }
+          }
+          
+          if (-not $downloaded) {
+            throw "Unable to download Maya 2022 Devkit from known Autodesk endpoints."
+          }
+          
+          Write-Host "Extracting Maya 2022 Devkit..."
+          Expand-Archive -Path $destZip -DestinationPath $extractDir -Force
+          
+          # 自动递归寻找 include/maya/MFn.h 所在的 devkitBase 目录
+          $mfn = Get-ChildItem -Path $extractDir -Filter "MFn.h" -Recurse | Select-Object -First 1
+          if ($mfn) {
+            $devkitBase = $mfn.Directory.Parent.Parent.FullName
+            Write-Host "Found Maya Devkit at: $devkitBase"
+            # 输出给后续步骤使用
+            echo "DEVKIT_BASE=$devkitBase" >> $env:GITHUB_ENV
+          } else {
+            throw "Could not locate include/maya/MFn.h in extracted devkit!"
+          }
+
+      - name: Configure and Build cvWrap
+        shell: pwsh
+        run: |
+          Write-Host "Using DEVKIT_LOCATION: $env:DEVKIT_BASE"
+          
           cmake -B build -G "Visual Studio 17 2022" -A x64 `
             -DMAYA_VERSION=2022 `
-            -DDEVKIT_LOCATION="$devkit" `
-            -DMAYA_LOCATION="$devkit"
+            -DDEVKIT_LOCATION="$env:DEVKIT_BASE" `
+            -DMAYA_LOCATION="$env:DEVKIT_BASE"
             
           cmake --build build --config Release
 
-      - name: Upload cvWrap.mll
+      - name: Upload cvWrap.mll Artifact
         uses: actions/upload-artifact@v4
         with:
           name: cvWrap_Maya2022_Windows
-          path: |
-            build/Release/cvWrap.mll
-            build/**/cvWrap.mll
+          path: build/**/cvWrap.mll
+          if-no-files-found: error

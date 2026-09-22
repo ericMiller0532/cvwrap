@@ -1,4 +1,4 @@
-name: Build cvWrap for Maya 2022
+name: Build cvWrap for Maya 2024
 
 on:
   workflow_dispatch:
@@ -12,13 +12,14 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Download and Prepare Maya 2022 Devkit
+      - name: Download and Prepare Maya 2024 Devkit
         shell: pwsh
         run: |
+          # Autodesk 官方与镜像提供的 Maya 2024 Devkit 下载源
           $urls = @(
-            "https://autodesk-adn-transfer.s3.us-west-2.amazonaws.com/ADN+Extranet/M%26E/Maya/devkit+2022/Autodesk_Maya_2022_5_Update_DEVKIT_Windows.zip",
-            "https://autodesk-adn-transfer.s3.us-west-2.amazonaws.com/ADN+Extranet/M%26E/Maya/devkit+2022/Autodesk_Maya_2022_DEVKIT_Windows.zip",
-            "https://autodesk-adn-transfer.s3-us-west-2.amazonaws.com/ADN+Extranet/M%26E/Maya/devkit+2022/Autodesk_Maya_2022_DEVKIT_Windows.zip"
+            "https://autodesk-adn-transfer.s3.us-west-2.amazonaws.com/ADN+Extranet/M%26E/Maya/devkit+2024/Autodesk_Maya_2024_2_Update_DEVKIT_Windows.zip",
+            "https://autodesk-adn-transfer.s3.us-west-2.amazonaws.com/ADN+Extranet/M%26E/Maya/devkit+2024/Autodesk_Maya_2024_DEVKIT_Windows.zip",
+            "https://autodesk-adn-transfer.s3-us-west-2.amazonaws.com/ADN+Extranet/M%26E/Maya/devkit+2024/Autodesk_Maya_2024_DEVKIT_Windows.zip"
           )
           
           $destZip = "$env:RUNNER_TEMP\devkit.zip"
@@ -41,23 +42,23 @@ jobs:
           }
           
           if (-not $downloaded) {
-            throw "Unable to download Maya 2022 Devkit from known Autodesk endpoints."
+            throw "Unable to download Maya 2024 Devkit from known Autodesk endpoints."
           }
           
-          Write-Host "Extracting Maya 2022 Devkit..."
+          Write-Host "Extracting Maya 2024 Devkit..."
           Expand-Archive -Path $destZip -DestinationPath $extractDir -Force
           
+          # 定位 MFn.h 所在根目录并转换为 CMake 兼容的正斜杠路径
           $mfn = Get-ChildItem -Path $extractDir -Filter "MFn.h" -Recurse | Select-Object -First 1
           if ($mfn) {
-            # 转换为 CMake 兼容的正斜杠格式（避免反斜杠被转义）
             $devkitBase = $mfn.Directory.Parent.Parent.FullName.Replace('\', '/')
-            Write-Host "Found Maya Devkit at: $devkitBase"
+            Write-Host "Found Maya 2024 Devkit at: $devkitBase"
             echo "DEVKIT_BASE=$devkitBase" >> $env:GITHUB_ENV
           } else {
             throw "Could not locate include/maya/MFn.h in extracted devkit!"
           }
 
-      - name: Configure and Build cvWrap
+      - name: Configure and Build cvWrap for Maya 2024
         shell: pwsh
         run: |
           Write-Host "Patching CMakeLists.txt for modern CMake compatibility..."
@@ -68,36 +69,44 @@ jobs:
           $devkit = $env:DEVKIT_BASE
           Write-Host "Using Clean Devkit Path: $devkit"
           
-          # 设置环境变量，供 FindMaya.cmake 识别
           $env:MAYA_LOCATION = $devkit
           $env:DEVKIT_LOCATION = $devkit
 
-          # 使用安全的参数数组调用 CMake，避免反引号换行引起的传参破坏
           $cmakeArgs = @(
             "-B", "build",
             "-G", "Visual Studio 17 2022",
             "-A", "x64",
             "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
-            "-DMAYA_VERSION=2022",
+            "-DMAYA_VERSION=2024",
             "-DMAYA_LOCATION=$devkit",
             "-DDEVKIT_LOCATION=$devkit",
             "-DMAYA_INCLUDE_DIR=$devkit/include",
             "-DMAYA_LIBRARY=$devkit/lib/OpenMaya.lib"
           )
           
-          Write-Host "Running cmake configure..."
+          Write-Host "Running cmake configure for Maya 2024..."
           & cmake @cmakeArgs
           
           if ($LASTEXITCODE -ne 0) {
             throw "CMake configure failed!"
           }
 
-          Write-Host "Running cmake build..."
+          Write-Host "Running cmake build Release..."
           & cmake --build build --config Release
 
-      - name: Upload cvWrap.mll Artifact
+      - name: Package cvWrap Plug-in and Scripts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist/plug-ins
+          New-Item -ItemType Directory -Force -Path dist/scripts
+          Copy-Item "build/**/cvWrap.mll" "dist/plug-ins/" -Force
+          if (Test-Path "scripts") {
+            Copy-Item -Recurse "scripts/*" "dist/scripts/" -Force
+          }
+
+      - name: Upload cvWrap Maya 2024 Package
         uses: actions/upload-artifact@v4
         with:
-          name: cvWrap_Maya2022_Windows
-          path: build/**/cvWrap.mll
+          name: cvWrap_Maya2024_Windows
+          path: dist/
           if-no-files-found: error

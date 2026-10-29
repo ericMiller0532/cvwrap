@@ -12,17 +12,51 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Locate Local Maya 2024 Devkit
+      - name: Download and Prepare Maya 2024 Devkit
         shell: pwsh
         run: |
-          # 直接指定并验证本地 Devkit 路径
-          $devkitBase = "D:/a/_temp/devkit"
+          # Autodesk 官方提供的 Maya 2024 Devkit Windows 下载镜像链接
+          $urls = @(
+            "https://autodesk-adn-transfer.s3.us-west-2.amazonaws.com/ADN+Extranet/M%26E/Maya/devkit+2024/Autodesk_Maya_2024_2_Update_DEVKIT_Windows.zip",
+            "https://autodesk-adn-transfer.s3.us-west-2.amazonaws.com/ADN+Extranet/M%26E/Maya/devkit+2024/Autodesk_Maya_2024_1_Update_DEVKIT_Windows.zip",
+            "https://autodesk-adn-transfer.s3.us-west-2.amazonaws.com/ADN+Extranet/M%26E/Maya/devkit+2024/Autodesk_Maya_2024_DEVKIT_Windows.zip"
+          )
           
-          if (Test-Path "$devkitBase") {
-            Write-Host "成功定位本地 Maya 2024 Devkit 路径: $devkitBase"
+          $destZip = "$env:RUNNER_TEMP\devkit.zip"
+          $extractDir = "$env:RUNNER_TEMP\devkit"
+          
+          $downloaded = $false
+          foreach ($url in $urls) {
+            Write-Host "Attempting download from: $url"
+            try {
+              & curl.exe -f -L --retry 3 -o $destZip $url
+              if ($LASTEXITCODE -eq 0 -and (Test-Path $destZip) -and ((Get-Item $destZip).Length -gt 10000000)) {
+                $fileSizeMB = [math]::Round((Get-Item $destZip).Length / 1MB, 2)
+                Write-Host "Download successful! File size: $fileSizeMB MB"
+                $downloaded = $true
+                break
+              }
+            } catch {
+              Write-Host "Failed from this mirror, trying next..."
+            }
+          }
+          
+          if (-not $downloaded) {
+            throw "Unable to download Maya 2024 Devkit from known Autodesk endpoints."
+          }
+          
+          Write-Host "Extracting Maya 2024 Devkit..."
+          if (Test-Path $extractDir) { Remove-Item $extractDir -Recurse -Force }
+          Expand-Archive -Path $destZip -DestinationPath $extractDir -Force
+          
+          # 自动递归定位 MFn.h 所在的根路径
+          $mfn = Get-ChildItem -Path $extractDir -Filter "MFn.h" -Recurse | Select-Object -First 1
+          if ($mfn) {
+            $devkitBase = $mfn.Directory.Parent.Parent.FullName.Replace('\', '/')
+            Write-Host "Found Maya 2024 Devkit at: $devkitBase"
             echo "DEVKIT_BASE=$devkitBase" >> $env:GITHUB_ENV
           } else {
-            throw "未能在指定路径找到本地 Devkit: $devkitBase"
+            throw "Could not locate include/maya/MFn.h in extracted devkit!"
           }
 
       - name: Configure and Build cvWrap for Maya 2024
@@ -34,7 +68,7 @@ jobs:
           }
 
           $devkit = $env:DEVKIT_BASE
-          Write-Host "Using Local Devkit Path: $devkit"
+          Write-Host "Using Clean Devkit Path: $devkit"
           
           $env:MAYA_LOCATION = $devkit
           $env:DEVKIT_LOCATION = $devkit

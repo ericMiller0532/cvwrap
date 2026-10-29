@@ -5,7 +5,7 @@ on:
 
 jobs:
   build:
-    runs-on: windows-2022
+    runs-on: windows-2024
     steps:
       - name: Checkout cvwrap with submodules
         uses: actions/checkout@v4
@@ -100,8 +100,27 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path dist/plug-ins
           New-Item -ItemType Directory -Force -Path dist/scripts
-          Copy-Item "build/**/cvWrap.mll" "dist/plug-ins/" -Force
+
+          # 精准定位 CMake 实际输出的 cvwrap.mll 路径
+          $targetMll = "build/src/Release/cvwrap.mll"
+          
+          if (Test-Path $targetMll) {
+            Write-Host "成功找到编译产物: $targetMll"
+            Copy-Item $targetMll "dist/plug-ins/" -Force
+          } else {
+            Write-Host "指定路径未直接命中，正在全局检索 .mll 文件..."
+            $mllFiles = Get-ChildItem -Path "build" -Filter "*.mll" -Recurse
+            if ($mllFiles.Count -eq 0) {
+              throw "未检测到编译生成的 .mll 文件，构建失败！"
+            }
+            foreach ($file in $mllFiles) {
+              Write-Host "检索到编译产物: $($file.FullName)"
+              Copy-Item $file.FullName "dist/plug-ins/" -Force
+            }
+          }
+
           if (Test-Path "scripts") {
+            Write-Host "正在打包配套脚本..."
             Copy-Item -Recurse "scripts/*" "dist/scripts/" -Force
           }
 
